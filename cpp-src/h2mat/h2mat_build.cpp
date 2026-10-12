@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <limits>
 #include "omp.h"
 
 #include "../common.h"
@@ -24,13 +25,10 @@ static void h2m_calc_near_far_pairs_recursive(
     h2m_2dbuf_p near_pairs, h2m_2dbuf_p far_pairs, int *min_far_lvl
 )
 {
-    int  val_type     = octree->val_type;
-    int  pt_dim       = octree->pt_dim;
-    int  max_children = 1 << pt_dim;
+    int  max_children = octree->max_children;
     int  *children    = octree->children;
     int  *n_children  = octree->n_children;
     int  *node_lvl    = octree->node_lvl;
-    void *enbox       = octree->enbox;
 
     if (node0 == node1)
     {
@@ -54,12 +52,7 @@ static void h2m_calc_near_far_pairs_recursive(
         int lvl0 = node_lvl[node0];
         int lvl1 = node_lvl[node1];
         // 1. The current node pair is far pair, no further recursion is needed
-        size_t val_bytes = (val_type == VAL_TYPE_DOUBLE) ? sizeof(double) : sizeof(float);
-        char *enbox0 = (char *) enbox;
-        char *enbox1 = (char *) enbox;
-        enbox0 += node0 * 2 * pt_dim * val_bytes;
-        enbox1 += node1 * 2 * pt_dim * val_bytes;
-        if (h2m_is_admissible_enbox_pair(val_type, pt_dim, enbox0, enbox1))
+        if (h2m_is_admissible_node_pair(octree, node0, node1))
         {
             h2m_2dbuf_ivec_push(far_pairs, node0);
             h2m_2dbuf_ivec_push(far_pairs, node1);
@@ -124,7 +117,7 @@ static void h2m_calc_near_far_pairs_recursive(
 //   node_n_far  : Size octree->n_node, number of far pairs for each node
 //   node_far    : Size octree->n_node * octree->n_node, each row stores the far pairs for a node
 //   min_far_lvl : The minimum level of far pairs
-static void h2m_calc_near_far_lists(
+void h2m_calc_near_far_lists(
     octree_p octree, int *node_n_near, int *node_near, 
     int *node_n_far, int *node_far, int *min_far_lvl
 )
@@ -182,8 +175,13 @@ static void h2m_calc_near_far_lists(
     h2m_2dbuf_free(&far_pairs);
 }
 
+// Build the column basis matrices and the skeleton points of all nodes, bottom-up.
+// use_sp == 0 : pp[l] are the proxy points of level l, in the frame of a box centered 
+//               at the origin: the skeleton points of a node are shifted by its box center.
+// use_sp == 1 : pp[node] are the sample points of each node, real points taken in the 
+//               far field of the node: no shift, works for any partitioning tree.
 template <typename VT>
-static void h2mat_build_VJ_proxy(h2mat_p h2mat, h2m_2dbuf_p *pp, const void *reltol)
+static void h2mat_build_VJ_proxy(h2mat_p h2mat, h2m_2dbuf_p *pp, const void *reltol, const int use_sp = 0)
 {
     octree_p octree  = h2mat->octree;
     int npt          = octree->npt;
@@ -191,7 +189,7 @@ static void h2mat_build_VJ_proxy(h2mat_p h2mat, h2m_2dbuf_p *pp, const void *rel
     int n_level      = octree->n_level;
     int n_node       = octree->n_node;
     int val_type     = octree->val_type;
-    int max_children = 1 << pt_dim;
+    int max_children = octree->max_children;
     int *n_children  = octree->n_children;
     int *children    = octree->children;
     int *lvl_nnode   = octree->lvl_nnode;
@@ -226,6 +224,18 @@ static void h2mat_build_VJ_proxy(h2mat_p h2mat, h2m_2dbuf_p *pp, const void *rel
         for (int i = tid * thread_n_workbuf; i < (tid + 1) * thread_n_workbuf; i++)
             h2m_2dbuf_init(thread_workbufs + i, sizeof(VT), 1024, 1);
     }
+
+    // Sample points only cover a part of the far field of a node, so the ID is asked for 
+    // a higher accuracy than the target one (factor 1e-4, as in H2Pack), but not beyond 
+    // what the floating point type can resolve
+    VT id_reltol_ = *((const VT *) reltol);
+    if (use_sp)
+    {
+        VT min_reltol = 10 * std::numeric_limits<VT>::epsilon();
+        id_reltol_ *= (VT) 1e-4;
+        if (id_reltol_ < min_reltol) id_reltol_ = min_reltol;
+    }
+    const void *id_reltol = (const void *) &id_reltol_;
 
     // 2. Hierarchical construction level by level
     for (int l = n_level - 1; l >= min_far_lvl; l--)
@@ -283,10 +293,11 @@ static void h2mat_build_VJ_proxy(h2mat_p h2mat, h2m_2dbuf_p *pp, const void *rel
             for (int j = 0; j < lvl_nnode[l]; j++)
             {
                 int node_j = lvl_l_nodes[j];
+                h2m_2dbuf_p pp_j = use_sp ? pp[node_j] : pp[l];
 
-                if (pp[l]->nrow == 0)
+                if (pp_j->nrow == 0)
                 {
-                    // Fast path: no proxy point at this level
+                    // Fast path: no proxy point at this level / no far field for this node
                     h2m_2dbuf_resize(V_mats[node_j], sizeof(VT), 1, J_coords[node_j]->nrow);
                     memset(V_mats[node_j]->data, 0, sizeof(VT) * J_coords[node_j]->nrow);
                     int skel_idx = 0;
@@ -295,13 +306,13 @@ static void h2mat_build_VJ_proxy(h2mat_p h2mat, h2m_2dbuf_p *pp, const void *rel
                     continue;
                 }
 
-                // (2) Shift current node's skeleton points to the origin
+                // (2) Shift current node's skeleton points to the origin (proxy points only)
                 h2m_2dbuf_p shift_coords_j = thread_workbuf[0];
                 h2m_2dbuf_resize(shift_coords_j, sizeof(VT), J_coords[node_j]->nrow, J_coords[node_j]->ncol);
                 VT *enbox_j = enbox + node_j * 2 * pt_dim;
                 for (int k = 0; k < pt_dim; k++)
                 {
-                    VT center_k = enbox_j[k] + 0.5 * enbox_j[pt_dim + k];
+                    VT center_k = use_sp ? (VT) 0 : (enbox_j[k] + 0.5 * enbox_j[pt_dim + k]);
                     VT *J_coords_jk     = (VT *) J_coords[node_j]->data;
                     VT *shift_coords_jk = (VT *) shift_coords_j->data;
                     J_coords_jk     += k * J_coords[node_j]->nrow;
@@ -313,9 +324,9 @@ static void h2mat_build_VJ_proxy(h2mat_p h2mat, h2m_2dbuf_p *pp, const void *rel
 
                 // (3) Build the kernel matrix K(pp[l], shift_coords_j)
                 h2m_2dbuf_p K_blk = thread_workbuf[1];
-                h2m_2dbuf_resize(K_blk, sizeof(VT), pp[l]->nrow, shift_coords_j->nrow);
+                h2m_2dbuf_resize(K_blk, sizeof(VT), pp_j->nrow, shift_coords_j->nrow);
                 krnl(
-                    pp[l]->nrow, pp[l]->nrow, pp[l]->data, 
+                    pp_j->nrow, pp_j->nrow, pp_j->data, 
                     shift_coords_j->nrow, shift_coords_j->nrow, shift_coords_j->data,
                     param, K_blk->nrow, K_blk->data, val_type
                 );
@@ -329,7 +340,7 @@ static void h2mat_build_VJ_proxy(h2mat_p h2mat, h2m_2dbuf_p *pp, const void *rel
                 void *V = NULL;
                 id_ppqr(
                     K_blk->nrow, K_blk->ncol, val_type, K_blk->data, K_blk->nrow,
-                    max_rank, reltol, id_nthread, &rank, &skel_idx, &V, ID_buff->data_i, QR_buff->data
+                    max_rank, id_reltol, id_nthread, &rank, &skel_idx, &V, ID_buff->data_i, QR_buff->data
                 );
                 h2m_2dbuf_resize(V_mats[node_j], sizeof(VT), rank, K_blk->ncol);
                 memcpy(V_mats[node_j]->data, V, sizeof(VT) * rank * K_blk->ncol);
@@ -348,16 +359,21 @@ static void h2mat_build_VJ_proxy(h2mat_p h2mat, h2m_2dbuf_p *pp, const void *rel
     free(thread_workbufs);
 }
 
-// Build an H2 matrix for K(X, X, l) with a given point partitioning 
-// octree and a set of proxy points
-void h2mat_build_with_proxy_points(
-    octree_p octree, h2m_2dbuf_p *pp, krnl_func krnl,
+// Common part of h2mat_build_with_{proxy, sample}_points()
+static void h2mat_build_(
+    octree_p octree, h2m_2dbuf_p *pp, const int use_sp, krnl_func krnl,
     void *param, const void *reltol, h2mat_p *h2mat
 )
 {
     if (octree == NULL)
     {
         ERROR_PRINTF("Provided octree struct has not been initialized yet\n");
+        *h2mat = NULL;
+        return;
+    }
+    if (use_sp == 0 && H2_TREE_IS_BALL(octree->tree_type))
+    {
+        ERROR_PRINTF("Proxy points need the box tree, use h2mat_build_with_sample_points() with the PCA and 2-means trees\n");
         *h2mat = NULL;
         return;
     }
@@ -370,8 +386,12 @@ void h2mat_build_with_proxy_points(
     int min_far_lvl = 0;
     int *node_n_near = (int *) malloc(sizeof(int) * n_node);
     int *node_n_far  = (int *) malloc(sizeof(int) * n_node);
-    int *node_near   = (int *) malloc(sizeof(int) * n_node * n_node);
-    int *node_far    = (int *) malloc(sizeof(int) * n_node * n_node);
+    int *node_near   = (int *) malloc(sizeof(int) * (size_t) n_node * n_node);
+    int *node_far    = (int *) malloc(sizeof(int) * (size_t) n_node * n_node);
+    ASSERT_PRINTF(
+        node_n_near != NULL && node_n_far != NULL && node_near != NULL && node_far != NULL,
+        "Failed to allocate near / far lists for %d nodes\n", n_node
+    );
     h2m_calc_near_far_lists(octree, node_n_near, node_near, node_n_far, node_far, &min_far_lvl);
     h2mat_->octree      = octree;
     h2mat_->n_node      = n_node;
@@ -383,11 +403,61 @@ void h2mat_build_with_proxy_points(
     h2mat_->krnl        = krnl;
     h2mat_->param       = param;
     
-    // 2. Compute column basis matrices using proxy points
+    // 2. Compute column basis matrices using proxy points or sample points
     if (octree->val_type == VAL_TYPE_DOUBLE)
-        h2mat_build_VJ_proxy<double>(h2mat_, pp, reltol);
+        h2mat_build_VJ_proxy<double>(h2mat_, pp, reltol, use_sp);
     if (octree->val_type == VAL_TYPE_FLOAT)
-        h2mat_build_VJ_proxy<float> (h2mat_, pp, reltol);
+        h2mat_build_VJ_proxy<float> (h2mat_, pp, reltol, use_sp);
 
     *h2mat = h2mat_;
+}
+
+// Build an H2 matrix for K(X, X, l) with a given point partitioning 
+// octree and a set of proxy points
+void h2mat_build_with_proxy_points(
+    octree_p octree, h2m_2dbuf_p *pp, krnl_func krnl,
+    void *param, const void *reltol, h2mat_p *h2mat
+)
+{
+    h2mat_build_(octree, pp, 0, krnl, param, reltol, h2mat);
+}
+
+// Build an H2 matrix for K(X, X, l) with a given point partitioning 
+// tree and the sample points of each node
+void h2mat_build_with_sample_points(
+    octree_p octree, h2m_2dbuf_p *sp, krnl_func krnl,
+    void *param, const void *reltol, h2mat_p *h2mat
+)
+{
+    h2mat_build_(octree, sp, 1, krnl, param, reltol, h2mat);
+}
+
+// Print the main characteristics of an H2 matrix
+void h2mat_print_info(h2mat_p h2mat, const char *name)
+{
+    if (h2mat == NULL) return;
+    octree_p octree = h2mat->octree;
+    int n_node = h2mat->n_node;
+    long long n_far = 0, n_near = 0, far_entries = 0, sum_rank = 0;
+    int max_rank = 0, n_basis = 0;
+    for (int i = 0; i < n_node; i++)
+    {
+        n_far  += h2mat->node_n_far[i];
+        n_near += h2mat->node_n_near[i];
+        for (int j = 0; j < h2mat->node_n_far[i]; j++)
+            far_entries += (long long) octree->node_npt[i] * (long long) octree->node_npt[h2mat->node_far[(size_t) i * n_node + j]];
+        if (octree->node_lvl[i] < h2mat->min_far_lvl) continue;
+        int rank = h2mat->V_mats[i]->nrow;
+        if (rank > max_rank) max_rank = rank;
+        sum_rank += rank;
+        n_basis++;
+    }
+    int n_leaf = 0;
+    for (int i = 0; i < n_node; i++) if (octree->n_children[i] == 0) n_leaf++;
+    double npt2 = (double) octree->npt * (double) octree->npt;
+    printf("[H2 mat] %s: %lld admissible pairs covering %.1f %% of the matrix, %lld dense leaf pairs\n", 
+           name, n_far / 2, 100.0 * (double) far_entries / npt2, (n_near - n_leaf) / 2);
+    printf("[H2 mat]   min admissible level %d, basis rank max / avg = %d / %.0f\n", 
+           h2mat->min_far_lvl, max_rank, (n_basis > 0) ? (double) sum_rank / n_basis : 0.0);
+    fflush(stdout);
 }

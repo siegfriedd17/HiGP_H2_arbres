@@ -34,9 +34,9 @@ void pgp_loss_init(
     pgp_loss_->n_iter   = n_iter;
     pgp_loss_->n_vec    = n_vec;
     pgp_loss_->kmat_alg = kmat_alg;
-    if (pt_dim > 3 && kmat_alg == SYMM_KMAT_ALG_H2_PROXY)
+    if (!h2_tree_dim_supported(pt_dim) && kmat_alg == SYMM_KMAT_ALG_H2_PROXY)
     {
-        WARNING_PRINTF("Cannot use H2 matrix for pt_dim > 3, will use dense kernel matrix\n");
+        WARNING_PRINTF("The box tree cannot be used for pt_dim > 3 (choose the PCA or 2-means tree), will use dense kernel matrix\n");
         pgp_loss_->kmat_alg = SYMM_KMAT_ALG_DENSE_FORM;
     }
 
@@ -304,6 +304,9 @@ static void precond_gpr_loss_compute(
         VT h2_reltol = 0;  // TODO: tune this parameter
         if (is_double) h2_reltol = 1e-10;
         if (is_float)  h2_reltol = 1e-5;
+        h2_tree_options_s h2_opt;
+        h2_tree_get_options(&h2_opt);
+        if (h2_opt.h2_reltol > 0.0) h2_reltol = (VT) h2_opt.h2_reltol;
         ss_h2mat_init(octree, (void *) &nnt_param[0], dnoise, krnl_id, 1, (void *) &h2_reltol, &ss_h2mat);
         A_mm  = (matmul_fptr) ss_h2mat_krnl_matmul;
         A_ptr = (void *) ss_h2mat;
@@ -487,6 +490,9 @@ static void precond_gpr_predict(
         VT h2_reltol = 0;  // TODO: tune this parameter
         if (is_double) h2_reltol = 1e-10;
         if (is_float)  h2_reltol = 1e-5;
+        h2_tree_options_s h2_opt;
+        h2_tree_get_options(&h2_opt);
+        if (h2_opt.h2_reltol > 0.0) h2_reltol = (VT) h2_opt.h2_reltol;
         octree_build(
             n_train, pt_dim, val_type, (const void *) X_train, 
             leaf_nmax, (const void *) &leaf_emax, &K11_octree

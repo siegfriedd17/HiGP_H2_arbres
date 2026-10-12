@@ -685,8 +685,29 @@ static char HiGP_Cext_gpc_prediction_help[] =
  * @brief       Function for the global HiGP.
  * @details     Function for the global HiGP.
  */
+static PyObject* HiGP_Cext_set_h2_options(PyObject *self, PyObject *args, PyObject *kwds);
+static PyObject* HiGP_Cext_get_h2_options(PyObject *self, PyObject *args);
+
+PyDoc_STRVAR(HiGP_Cext_set_h2_options_help,
+    "set_h2_options(tree=None, adm_alpha=None, leaf_nmax=None, max_anchor=None, kmeans_max_iter=None, "
+    "kmeans_min_frac=None, knn_max_neighbor=None, min_size=None, verbose=None, h2_tol=None)\n"
+    "Set the global options of the H2 matrix module; only the given options are changed.\n"
+    "  tree             : 'pca' (default), '2means', or 'box' (box: dimension <= 3 only)\n"
+    "  adm_alpha        : pca / 2means: nodes (i, j) are admissible if dist(c_i, c_j) >= adm_alpha * (r_i + r_j), default 1.5\n"
+    "  leaf_nmax        : maximum number of points in a leaf node, 0 (default) for the built-in value (400)\n"
+    "  max_anchor       : maximum size of a sample point anchor grid, default 2048\n"
+    "  kmeans_max_iter  : 2means: maximum number of Lloyd iterations per node, default 30\n"
+    "  kmeans_min_frac  : 2means: smallest accepted cluster, as a fraction of the node, default 0.05\n"
+    "  knn_max_neighbor : pca / 2means: number of nodes searched by the preconditioner's fast KNN, default 27\n"
+    "  min_size         : number of points from which the 'auto' matvec type uses an H2 matrix, default 20000\n"
+    "  verbose          : 1 to print information on each tree and H2 matrix that is built, default 0\n"
+    "  h2_tol           : H2 compression tolerance used by GP training and prediction, 0 (default) for the built-in values (1e-10 double, 1e-5 single)\n"
+    "Returns the dictionary of all current options.");
+
 static PyMethodDef HiGP_Cext_module_methods[] = 
 {
+    {"set_h2_options", (PyCFunction) HiGP_Cext_set_h2_options, METH_VARARGS|METH_KEYWORDS, HiGP_Cext_set_h2_options_help},
+    {"get_h2_options", (PyCFunction) HiGP_Cext_get_h2_options, METH_NOARGS, "get_h2_options()\nReturn the dictionary of the global options of the H2 matrix module."},
     {"gpr_prediction_", (PyCFunction) HiGP_Cext_gpr_prediction, METH_VARARGS|METH_KEYWORDS, HiGP_Cext_gpr_prediction_help},
     {"gpc_prediction_", (PyCFunction) HiGP_Cext_gpc_prediction, METH_VARARGS|METH_KEYWORDS, HiGP_Cext_gpc_prediction_help},
     {NULL}

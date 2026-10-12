@@ -25,11 +25,11 @@ extern "C" {
 //   param   : Kernel matrix parameters [dim, l, f, s]
 //   dnoise  : Diagonal noise vector, can be NULL (== 0)
 //   krnl_id : Kernel ID, see kernels/kernels.h
-//   algo    : H2 matrix construction algorithm, 1 for proxy points
+//   algo    : H2 matrix construction algorithm, 1 for proxy points (box tree only), 
+//             2 for sample points (any tree). The PCA and 2-means trees always use 2.
 //   reltol  : H2 compression relative error tolerance
 // Output parameter:
 //   *ss_h2mat : An initialized ss_h2mat struct
-// Note: algo only supports 1 for now
 void ss_h2mat_init(
     octree_p octree, const void *param, const void *dnoise, const int krnl_id, 
     const int algo, void *reltol, ss_h2mat_p *ss_h2mat

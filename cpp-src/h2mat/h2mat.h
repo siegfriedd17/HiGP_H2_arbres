@@ -6,6 +6,7 @@
 #include "h2mat_typedef.h"
 #include "h2mat_utils.h"
 #include "h2mat_proxy_points.h"
+#include "h2mat_sample_points.h"
 #include "h2mat_build.h"
 #include "h2mat_matmul.h"
 #include "ss_h2mat.h"

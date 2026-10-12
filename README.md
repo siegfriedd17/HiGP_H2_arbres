@@ -1,3 +1,8 @@
+> **HiGP_H2_arbres** : version modifiée de HiGP dans laquelle la matrice H² fonctionne en
+> dimension quelconque (arbres PCA et 2-means). Voir [TUTORIEL.md](TUTORIEL.md) pour
+> l'utilisation et [MODIFICATIONS.md](MODIFICATIONS.md) pour la liste des changements.
+> Le texte ci-dessous est le README d'origine de HiGP.
+
 # HiGP
 
 **HiGP** is a high-performance Python package for using Gaussian processes (GPs) with large datasets.

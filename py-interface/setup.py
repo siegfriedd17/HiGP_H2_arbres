@@ -115,7 +115,11 @@ def get_numpy_linalg_lib():
     return has_mkl, has_openblas, lib_dir, lib_name
 
 if not skip_blas_detection:
-    has_mkl, has_openblas, lib_dir, lib_name = get_numpy_linalg_lib()
+    # OpenBLAS (interface 32 bits) du systeme par defaut. Pour une autre installation :
+    #   HIGP_BLAS_DIR=/chemin/vers/lib HIGP_BLAS_NAME=openblas python setup.py build_ext --inplace
+    has_mkl, has_openblas = 0, 32
+    lib_dir  = os.environ.get("HIGP_BLAS_DIR", "/usr/lib/x86_64-linux-gnu")
+    lib_name = os.environ.get("HIGP_BLAS_NAME", "openblas")
     lflags += ["-L", lib_dir, "-l", lib_name]
     if has_mkl > 0:
         cflags += ["-DUSE_MKL"]
@@ -142,6 +146,7 @@ higp_cext = setuptools.Extension(
         workdir + "/../cpp-src/h2mat/h2mat_build.cpp",
         workdir + "/../cpp-src/h2mat/h2mat_matmul.cpp",
         workdir + "/../cpp-src/h2mat/h2mat_proxy_points.cpp",
+        workdir + "/../cpp-src/h2mat/h2mat_sample_points.cpp",
         workdir + "/../cpp-src/h2mat/h2mat_typedef.cpp",
         workdir + "/../cpp-src/h2mat/h2mat_utils.cpp",
         workdir + "/../cpp-src/h2mat/id_ppqr.cpp",

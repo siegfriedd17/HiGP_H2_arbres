@@ -6,6 +6,7 @@
 #include "../kernels/kernels.h"
 #include "ss_h2mat.h"
 #include "h2mat_proxy_points.h"
+#include "h2mat_sample_points.h"
 #include "h2mat_build.h"
 #include "h2mat_matmul.h"
 #include "ss_h2mat.h"
@@ -31,8 +32,25 @@ void ss_h2mat_init(
     krnl_func krnl = NULL, gkrnl = NULL;
     get_krnl_grad_func(krnl_id, &krnl, &gkrnl, NULL);
 
+    // Proxy points only exist for the box tree: the PCA and 2-means trees always 
+    // use sample points, whatever the requested algorithm
+    int algo_ = algo;
+    if (H2_TREE_IS_BALL(octree->tree_type)) algo_ = 2;
+
     h2mat_p K_h2mat = NULL, dKdl_h2mat = NULL;
-    if (algo == 1)
+    if (algo_ == 2)
+    {
+        // The sample points only depend on the tree and on the target accuracy: 
+        // the same ones are used for K and dK/dl
+        krnl_func krnls[2] = {krnl, gkrnl};
+        h2m_2dbuf_p *sp = NULL;
+        h2m_tree_sample_points(octree, 2, krnls, param, reltol, &sp);
+        h2mat_build_with_sample_points(octree, sp,  krnl, ss_h2mat_->param, reltol, &K_h2mat);
+        h2mat_build_with_sample_points(octree, sp, gkrnl, ss_h2mat_->param, reltol, &dKdl_h2mat);
+        for (int i = 0; i < octree->n_node; i++) h2m_2dbuf_free(&sp[i]);
+        free(sp);
+    }
+    if (algo_ == 1)
     {
         h2m_2dbuf_p *K_pp = NULL, *dKdl_pp = NULL;
         h2m_octree_proxy_points(octree, krnl,  param, reltol, &K_pp);
@@ -51,6 +69,14 @@ void ss_h2mat_init(
     ss_h2mat_->K_h2mat    = K_h2mat;
     ss_h2mat_->dKdl_h2mat = dKdl_h2mat;
     *ss_h2mat = ss_h2mat_;
+
+    h2_tree_options_s opt;
+    h2_tree_get_options(&opt);
+    if (opt.verbose)
+    {
+        h2mat_print_info(K_h2mat,    "K    ");
+        h2mat_print_info(dKdl_h2mat, "dK/dl");
+    }
 }
 
 // Free an initialized ss_h2mat struct

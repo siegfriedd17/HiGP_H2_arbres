@@ -1,3 +1,6 @@
+#include <vector>
+#include <algorithm>
+#include <utility>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -130,9 +133,19 @@ static void fsai_octree_fast_knn(
     for (int i = 0; i < n0; i++) octree_to_idx[i] = idx0_to_idx[octree_cidx[i]];
 
     // 3. Find all neighbor nodes (including self) for each node at search level.
-    //    Each node has at most 3^pt_dim neighbors.
+    //    Box tree: each node has at most 3^pt_dim neighbors, the nodes whose boxes touch its box.
+    //    PCA & 2-means trees: the nodes have no regular geometry, take a fixed number of 
+    //    nodes with the nearest centers. This bounds the candidate set in any dimension.
+    const int is_ball = H2_TREE_IS_BALL(octree->tree_type);
     int max_neighbor = 1;
-    for (int i = 0; i < octree->pt_dim; i++) max_neighbor *= 3;
+    if (is_ball)
+    {
+        h2_tree_options_s opt;
+        h2_tree_get_options(&opt);
+        max_neighbor = (search_lvl_nnode < opt.knn_max_neighbor) ? search_lvl_nnode : opt.knn_max_neighbor;
+    } else {
+        for (int i = 0; i < octree->pt_dim; i++) max_neighbor *= 3;
+    }
     int *sl_node_neighbors    = (int *) malloc(sizeof(int) * search_lvl_nnode * max_neighbor);
     int *sl_node_neighbor_cnt = (int *) malloc(sizeof(int) * search_lvl_nnode);
     ASSERT_PRINTF(
@@ -147,7 +160,36 @@ static void fsai_octree_fast_knn(
         sl_node_neighbors[i * max_neighbor] = node_i;
         sl_node_neighbor_cnt[i] = 1;
     }
-    for (int i = 0; i < search_lvl_nnode; i++)
+    if (is_ball)
+    {
+        const VT *center = (const VT *) octree->center;
+        #pragma omp parallel
+        {
+            std::vector<std::pair<double, int>> nb(search_lvl_nnode);
+            #pragma omp for schedule(dynamic)
+            for (int i = 0; i < search_lvl_nnode; i++)
+            {
+                const VT *center_i = center + (size_t) pt_dim * search_lvl_nodes[i];
+                for (int j = 0; j < search_lvl_nnode; j++)
+                {
+                    const VT *center_j = center + (size_t) pt_dim * search_lvl_nodes[j];
+                    double dist2_ij = 0.0;
+                    for (int d = 0; d < pt_dim; d++)
+                    {
+                        double diff = (double) center_i[d] - (double) center_j[d];
+                        dist2_ij += diff * diff;
+                    }
+                    nb[j] = std::make_pair(dist2_ij, search_lvl_nodes[j]);
+                }
+                nb[i].first = -1.0;  // The node itself is always in its neighbor list
+                if (max_neighbor < search_lvl_nnode)
+                    std::nth_element(nb.begin(), nb.begin() + max_neighbor, nb.end());
+                for (int j = 0; j < max_neighbor; j++) sl_node_neighbors[i * max_neighbor + j] = nb[j].second;
+                sl_node_neighbor_cnt[i] = max_neighbor;
+            }
+        }
+    }
+    for (int i = 0; (is_ball == 0) && (i < search_lvl_nnode); i++)
     {
         int node_i = search_lvl_nodes[i];
         VT *enbox_i = enbox + (2 * pt_dim) * node_i;

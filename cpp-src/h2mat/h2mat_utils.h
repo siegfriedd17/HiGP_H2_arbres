@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../utils.h"
+#include "octree.h"
 
 #define ALPHA_H2 0.99
 
@@ -104,6 +105,14 @@ int h2m_is_point_in_enbox(const int val_type, const int dim, const void *x, cons
 //   enbox0   : First enclosing box, size dim * 2
 //   enbox1   : Second enclosing box, size dim * 2
 int h2m_is_admissible_enbox_pair(const int val_type, const int dim, const void *enbox0, const void *enbox1);
+
+// Check if two nodes of a partitioning tree are admissible (far from each other)
+// Box tree           : test on the enclosing boxes, see h2m_is_admissible_enbox_pair()
+// PCA / 2-means tree : dist(center0, center1) >= adm_alpha * (radius0 + radius1)
+// Input parameters:
+//   octree       : Point partitioning tree
+//   node0, node1 : Indices of the two nodes
+int h2m_is_admissible_node_pair(octree_p octree, const int node0, const int node1);
 
 // Generate n uniformly distributed random points in a shell
 // [-L1/2, L1/2]^dim excluding [-L0/2, L0/2]^dim

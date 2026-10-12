@@ -14,7 +14,7 @@ static void h2mat_matmul_fwd(h2mat_p h2mat, const int n, const VT *pX, const int
     octree_p octree  = h2mat->octree;
     int pt_dim       = octree->pt_dim;
     int n_level      = octree->n_level;
-    int max_children = 1 << pt_dim;
+    int max_children = octree->max_children;
     int *n_children  = octree->n_children;
     int *children    = octree->children;
     int *lvl_nnode   = octree->lvl_nnode;
@@ -186,7 +186,7 @@ static void h2mat_matmul_bwd(h2mat_p h2mat, const int n, h2m_2dbuf_p *Y1, VT *pY
     octree_p octree  = h2mat->octree;
     int pt_dim       = octree->pt_dim;
     int n_level      = octree->n_level;
-    int max_children = 1 << pt_dim;
+    int max_children = octree->max_children;
     int *n_children  = octree->n_children;
     int *children    = octree->children;
     int *lvl_nnode   = octree->lvl_nnode;

@@ -96,7 +96,10 @@ static void matern52_generic(
         #pragma omp simd
         for (int i = 0; i < n0; i++)
         {
+            // The squared distance is computed as |x|^2 + |y|^2 - 2 x.y: rounding can make it 
+            // slightly negative for (nearly) identical points, and sqrt() would return NaN
             VT d2 = dist2_mat_j[i];
+            if (d2 < 0) d2 = 0;
             VT d = std::sqrt(d2);
             VT t1 = t0 * d;  // -sqrt(5) * d / l
             VT t2 = std::exp(t1);

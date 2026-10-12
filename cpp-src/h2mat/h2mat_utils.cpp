@@ -161,6 +161,38 @@ int h2m_is_admissible_enbox_pair(const int val_type, const int dim, const void *
 }
 
 template<typename VT>
+static int h2m_is_admissible_ball_pair(octree_p octree, const int node0, const int node1)
+{
+    const int dim = octree->pt_dim;
+    const VT *center0 = ((const VT *) octree->center) + (size_t) node0 * dim;
+    const VT *center1 = ((const VT *) octree->center) + (size_t) node1 * dim;
+    const VT *radius  = (const VT *) octree->radius;
+    double dist2 = 0.0;
+    for (int i = 0; i < dim; i++)
+    {
+        double diff = (double) center0[i] - (double) center1[i];
+        dist2 += diff * diff;
+    }
+    double min_dist = octree->adm_alpha * ((double) radius[node0] + (double) radius[node1]);
+    return (dist2 >= min_dist * min_dist) ? 1 : 0;
+}
+
+// Check if two nodes of a partitioning tree are admissible
+int h2m_is_admissible_node_pair(octree_p octree, const int node0, const int node1)
+{
+    const int val_type = octree->val_type, dim = octree->pt_dim;
+    if (H2_TREE_IS_BALL(octree->tree_type))
+    {
+        if (val_type == VAL_TYPE_DOUBLE) return h2m_is_admissible_ball_pair<double>(octree, node0, node1);
+        else return h2m_is_admissible_ball_pair<float>(octree, node0, node1);
+    }
+    size_t val_bytes = (val_type == VAL_TYPE_DOUBLE) ? sizeof(double) : sizeof(float);
+    const char *enbox0 = ((const char *) octree->enbox) + (size_t) node0 * 2 * dim * val_bytes;
+    const char *enbox1 = ((const char *) octree->enbox) + (size_t) node1 * 2 * dim * val_bytes;
+    return h2m_is_admissible_enbox_pair(val_type, dim, enbox0, enbox1);
+}
+
+template<typename VT>
 void h2m_rand_points_in_shell(const int n, const int dim, const VT *L0, const VT *L1, VT *x, const int ldx)
 {
     int cnt = 0;

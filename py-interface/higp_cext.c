@@ -1708,7 +1708,11 @@ int parse_gp_params(
         case 2: *kmat_alg = SYMM_KMAT_ALG_DENSE;      break;
         case 0: default:
         {
-            if ((npt < _h2_min_size) || (dim > 3)) *kmat_alg = SYMM_KMAT_ALG_DENSE_FORM;
+            // The H2 matrix is used from h2_min_size points, in any dimension with 
+            // the PCA and 2-means trees (dimension <= 3 only with the box tree)
+            h2_tree_options_s h2_opt;
+            h2_tree_get_options(&h2_opt);
+            if ((npt < h2_opt.h2_min_size) || !h2_tree_dim_supported(dim)) *kmat_alg = SYMM_KMAT_ALG_DENSE_FORM;
             else *kmat_alg = SYMM_KMAT_ALG_H2_PROXY;
         }
     }
@@ -2226,6 +2230,68 @@ static void gpc_problem_dealloc(GPCProblemObject* self)
     }
     Py_TYPE(self)->tp_free((PyObject*) self);
     printf("Dealloc gpc problem done\n");
+}
+
+/*------------------------------------ H2 options ------------------------------------*/
+
+static const char *h2_tree_names_[3] = {"box", "pca", "2means"};
+
+// set_h2_options(tree=None, adm_alpha=None, leaf_nmax=None, max_anchor=None, kmeans_max_iter=None,
+//                kmeans_min_frac=None, knn_max_neighbor=None, min_size=None, verbose=None)
+// Only the given options are changed. Return the dictionary of all current options.
+static PyObject* HiGP_Cext_get_h2_options(PyObject *self, PyObject *args);
+
+static PyObject* HiGP_Cext_set_h2_options(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    static char *kwlist[] = {
+        "tree", "adm_alpha", "leaf_nmax", "max_anchor", "kmeans_max_iter", 
+        "kmeans_min_frac", "knn_max_neighbor", "min_size", "verbose", "h2_tol", NULL
+    };
+    const char *tree = NULL;
+    double adm_alpha = -1.0, kmeans_min_frac = -1.0, h2_tol = -1.0;
+    int leaf_nmax = -1, max_anchor = -1, kmeans_max_iter = -1, knn_max_neighbor = -1, min_size = -1, verbose = -1;
+    if (!PyArg_ParseTupleAndKeywords(
+        args, kwds, "|zdiiidiiid", kwlist, &tree, &adm_alpha, &leaf_nmax, &max_anchor, 
+        &kmeans_max_iter, &kmeans_min_frac, &knn_max_neighbor, &min_size, &verbose, &h2_tol))
+        return NULL;
+
+    h2_tree_options_s opt;
+    h2_tree_get_options(&opt);
+    if (tree != NULL)
+    {
+        int tree_type = -1;
+        for (int i = 0; i < 3; i++) if (strcmp(tree, h2_tree_names_[i]) == 0) tree_type = i;
+        if (tree_type < 0)
+        {
+            PyErr_SetString(PyExc_ValueError, "tree must be 'box', 'pca' or '2means'");
+            return NULL;
+        }
+        opt.tree_type = tree_type;
+    }
+    if (adm_alpha        >  0.0) opt.adm_alpha        = adm_alpha;
+    if (leaf_nmax        >= 0)   opt.leaf_nmax        = leaf_nmax;
+    if (max_anchor       >  0)   opt.sp_max_anchor    = max_anchor;
+    if (kmeans_max_iter  >  0)   opt.kmeans_max_iter  = kmeans_max_iter;
+    if (kmeans_min_frac  >= 0.0) opt.kmeans_min_frac  = kmeans_min_frac;
+    if (knn_max_neighbor >  0)   opt.knn_max_neighbor = knn_max_neighbor;
+    if (min_size         >= 0)   opt.h2_min_size      = min_size;
+    if (verbose          >= 0)   opt.verbose          = verbose;
+    if (h2_tol           >= 0.0) opt.h2_reltol        = h2_tol;
+    h2_tree_set_options(&opt);
+    return HiGP_Cext_get_h2_options(self, NULL);
+}
+
+static PyObject* HiGP_Cext_get_h2_options(PyObject *self, PyObject *args)
+{
+    h2_tree_options_s opt;
+    h2_tree_get_options(&opt);
+    return Py_BuildValue(
+        "{s:s,s:d,s:i,s:i,s:i,s:d,s:i,s:i,s:i,s:d}",
+        "tree", h2_tree_names_[opt.tree_type], "adm_alpha", opt.adm_alpha, "leaf_nmax", opt.leaf_nmax, 
+        "max_anchor", opt.sp_max_anchor, "kmeans_max_iter", opt.kmeans_max_iter, 
+        "kmeans_min_frac", opt.kmeans_min_frac, "knn_max_neighbor", opt.knn_max_neighbor, 
+        "min_size", opt.h2_min_size, "verbose", opt.verbose, "h2_tol", opt.h2_reltol
+    );
 }
 
 /*------------------------------------HiGP Module------------------------------------*/

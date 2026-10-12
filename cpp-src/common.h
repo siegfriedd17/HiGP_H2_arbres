@@ -12,7 +12,7 @@ typedef enum symm_kmat_alg
 {
     SYMM_KMAT_ALG_DENSE = 0,        // dense_krnl_mat_p, on-the-fly matmul
     SYMM_KMAT_ALG_DENSE_FORM = 1,   // Form the full matrix / fall back to on-the-fly 
-    SYMM_KMAT_ALG_H2_PROXY = 2      // ss_h2mat_p, using proxy points
+    SYMM_KMAT_ALG_H2_PROXY = 2      // ss_h2mat_p, H2 matrix (proxy points on the box tree, sample points on the PCA / 2-means trees)
 } symm_kmat_alg_t;
 
 typedef enum gp_task
